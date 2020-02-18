@@ -36,12 +36,12 @@ except ImportError:
     pass
 
 
-storage_dir = "../storage"
+storage_dir = "../storage/"
 
 @hydra.main(config_path='experiments/config.yaml', strict=True)
 def main(config: DictConfig):
     global storage_dir
-    storage_dir = os.path.dirname(utils.get_original_cwd()) + "/storage"
+    storage_dir = os.path.dirname(utils.get_original_cwd()) + "/storage/"
     save_config_path = "runs/" + config.save_dir
     os.makedirs(save_config_path, exist_ok=True)
     with open(os.path.join(save_config_path, "README.md"), 'w+') as f:
