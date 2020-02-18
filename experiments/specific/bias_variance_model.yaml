@@ -1,6 +1,6 @@
-level: "block"
-distance_function: "cosine_loss"
-save_dir: "Bias-Variance-Block-lvl"
+level: "model"
+distance_function: "mse"
+save_dir: "Bias-Variance-Model-lvl"
 
 lipschitz_regularization: True
 homomorphic_regularization: True
