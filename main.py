@@ -17,6 +17,7 @@ import torchvision
 from tensorboardX import SummaryWriter
 from torchvision import transforms as transforms
 import hydra
+from hydra import utils
 from omegaconf import DictConfig
 
 from learn_utils import *
@@ -35,8 +36,12 @@ except ImportError:
     pass
 
 
-@hydra.main('experiments/sample.yaml', strict=True)
+storage_dir = "../storage"
+
+@hydra.main(config_path='experiments/config.yaml', strict=True)
 def main(config: DictConfig):
+    global storage_dir
+    storage_dir = os.path.dirname(utils.get_original_cwd()) + "/storage"
     save_config_path = "runs/" + config.save_dir
     os.makedirs(save_config_path, exist_ok=True)
     with open(os.path.join(save_config_path, "README.md"), 'w+') as f:
@@ -66,6 +71,14 @@ class Solver(object):
         else:
             self.writer = SummaryWriter(log_dir="runs/" + self.args.save_dir)
 
+        if self.args.homomorphic_regularization:
+            self.t = 1.0
+            self.n = self.args.homomorphic_k_inputs
+            self.k = self.n-1
+            self.centroid = 1/(self.n-self.k) - self.k/((self.n-self.k)*(self.n-self.k-1)) + (self.t*(self.n-1))/((self.n-self.k)*(self.n-self.k-1))
+            self.remainder = 1 - (self.centroid * (self.n-self.k-1))
+            self.sum_groups = self.n - self.k
+
         self.batch_plot_idx = 0
 
         self.train_batch_plot_idx = 0
@@ -91,10 +104,10 @@ class Solver(object):
 
         if self.args.dataset == "CIFAR-10":
             self.train_set = torchvision.datasets.CIFAR10(
-                root='../storage', train=True, download=True, transform=train_transform)
+                root=storage_dir, train=True, download=True, transform=train_transform)
         elif self.args.dataset == "CIFAR-100":
             self.train_set = torchvision.datasets.CIFAR100(
-                root='../storage', train=True, download=True, transform=train_transform)
+                root=storage_dir, train=True, download=True, transform=train_transform)
 
         if self.args.train_subset is None:
             self.train_loader = torch.utils.data.DataLoader(
@@ -128,10 +141,10 @@ class Solver(object):
 
         if self.args.dataset == "CIFAR-10":
             test_set = torchvision.datasets.CIFAR10(
-                root='../storage', train=False, download=True, transform=test_transform)
+                root=storage_dir, train=False, download=True, transform=test_transform)
         elif self.args.dataset == "CIFAR-100":
             test_set = torchvision.datasets.CIFAR100(
-                root='../storage', train=False, download=True, transform=test_transform)
+                root=storage_dir, train=False, download=True, transform=test_transform)
 
         self.test_loader = torch.utils.data.DataLoader(
             dataset=test_set, batch_size=self.args.test_batch_size, shuffle=False)
@@ -144,7 +157,7 @@ class Solver(object):
             self.device = torch.device('cpu')
 
         self.model = eval(self.args.model)
-        self.save_dir = "../storage/" + self.args.save_dir
+        self.save_dir = storage_dir + self.args.save_dir
         if not os.path.isdir(self.save_dir):
             os.makedirs(self.save_dir)
         self.init_model()
@@ -154,19 +167,20 @@ class Solver(object):
         self.model = self.model.to(self.device)
 
         self.optimizer = optim.SGD(self.model.parameters(), lr=self.args.lr, momentum=self.args.momentum, weight_decay=self.args.wd, nesterov=self.args.nesterov)
+        print(self.args.scheduler_name)
         if self.args.scheduler == "ReduceLROnPlateau":
             self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer, mode='min', factor=self.args.lr_gamma, patience=self.args.reduce_lr_patience,
                 min_lr=self.args.reduce_lr_min_lr, verbose=True, threshold=self.args.reduce_lr_delta)
         elif self.args.scheduler == "CosineAnnealingLR":
             if self.args.sum_augmentation:
-                self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer,T_max=self.args.epoch//(self.args.sum_groups-1),eta_min=self.args.reduce_lr_min_lr)
+                self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer,T_max=self.args.epoch//(self.args.nr_cycle-1),eta_min=self.args.reduce_lr_min_lr)
             else:
                 self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer,T_max=self.args.epoch,eta_min=self.args.reduce_lr_min_lr)
         elif self.args.scheduler == "MultiStepLR":
             self.scheduler = optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=self.args.lr_milestones, gamma=self.args.lr_gamma)
         elif self.args.scheduler == "OneCycleLR":
-            self.scheduler = optim.lr_scheduler.OneCycleLR(self.optimizer,max_lr=self.args.lr, total_steps=None, epochs=self.args.epoch//(self.args.sum_groups-1), steps_per_epoch=len(self.train_loader), pct_start=0.3, anneal_strategy='cos', cycle_momentum=True, base_momentum=0.85, max_momentum=0.95, div_factor=10.0, final_div_factor=500.0, last_epoch=-1)
+            self.scheduler = optim.lr_scheduler.OneCycleLR(self.optimizer,max_lr=self.args.lr, total_steps=None, epochs=self.args.epoch//(self.args.nr_cycle-1), steps_per_epoch=len(self.train_loader), pct_start=self.args.pct_start, anneal_strategy=self.args.anneal_strategy, cycle_momentum=self.args.cycle_momentum, base_momentum=self.args.base_momentum, max_momentum=self.args.max_momentum, div_factor=self.args.div_factor, final_div_factor=self.args.final_div_factor, last_epoch=self.args.last_epoch)
         else:
             print("This scheduler is not implemented, go ahead an commit one")
 
@@ -181,6 +195,153 @@ class Solver(object):
         self.batch_plot_idx += 1
         return self.batch_plot_idx - 1
 
+    def forward_lipschitz_loss_hook_fn(self,module,X,y):
+        if not self.model.training  or not self.args.lipschitz_regularization or (self.args.level == "layer" and not hasattr(module,'weight')):
+            return
+        module.eval()
+        
+        module.forward_handle.remove()
+
+        X = X[0]
+        y = module(X)
+        noise = self.args.lipschitz_noise_factor * torch.std(X, dim=0) * torch.randn(X.size(), device=self.device) 
+        X = X + noise
+        X = module(X)
+
+        if self.args.distance_function == "cosine_loss":
+            if self.lipschitz_loss is None:
+                self.lipschitz_loss = F.cosine_embedding_loss(X,y,self.aux_y)
+            else:
+                self.lipschitz_loss += F.cosine_embedding_loss(X,y,self.aux_y)
+        elif self.args.distance_function == "mse":
+            if self.lipschitz_loss is None:
+                self.lipschitz_loss = F.mse_loss(X,y)
+            else:
+                self.lipschitz_loss += F.mse_loss(X,y)
+        elif self.args.distance_function == "nll":
+            if self.lipschitz_loss is None:
+                self.lipschitz_loss =  (-F.softmax(y)+F.softmax(X).exp().sum(0).log()).mean()
+            else:
+                self.lipschitz_loss += (-F.softmax(y)+F.softmax(X).exp().sum(0).log()).mean()
+        else:
+            print("lipschitz distance function not implemented")
+            exit()
+        
+        module.forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+
+    def forward_homomorphic_loss_hook_fn(self,module,X,y):
+        if not self.model.training  or not self.args.homomorphic_regularization:
+            return
+
+        module.forward_handle.remove()
+
+        X = X[0]
+        shuffled_idxs = torch.randperm(y.size(0), device=self.device, dtype=torch.long)
+        shuffled_idxs = shuffled_idxs[:y.size(0)-y.size(0) % self.sum_groups]
+        mini_batches_idxs = shuffled_idxs.split(y.size(0) // self.sum_groups)
+
+        to_sum_groups = []
+        to_sum_targets = []
+        for mbi in mini_batches_idxs:
+            to_sum_groups.append(X[mbi].unsqueeze(0))
+            to_sum_targets.append(y[mbi].unsqueeze(0))
+
+        k_weights = torch.full((1,self.n),1/self.n)
+        if self.args.gradual_cascade:
+            k_weights = self.get_k_weights()
+        k_weights = k_weights.to(self.device)
+        data = (torch.cat(to_sum_groups, dim=0).T*k_weights[:,:self.sum_groups]).T.sum(0)
+        data = module(data)
+        targets = (torch.cat(to_sum_targets, dim=0).T*k_weights[:,:self.sum_groups]).T.sum(0)
+
+        if self.args.distance_function == "cosine_loss":
+            if self.homomorphic_loss is None:
+                self.homomorphic_loss = F.cosine_embedding_loss(data,targets,self.aux_y)
+            else:
+                self.homomorphic_loss.add(F.cosine_embedding_loss(data,targets,self.aux_y))
+        elif self.args.distance_function == "mse":
+            if self.homomorphic_loss is None:
+                self.homomorphic_loss = F.mse_loss(data,targets)
+            else:
+                self.homomorphic_loss += F.mse_loss(data,targets)
+        elif self.args.distance_function == "nll":
+            if self.homomorphic_loss is None:
+                self.homomorphic_loss =  (-F.softmax(targets)+F.softmax(data).exp().sum(0).log()).mean()
+            else:
+                self.homomorphic_loss += (-F.softmax(targets)+F.softmax(data).exp().sum(0).log()).mean()
+        else:
+            print("Homomorphic distance function not implemented")
+            exit()
+        
+        module.forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
+
+    def add_lipschitz_regularization(self):
+        self.modules_count = 0
+        self.aux_y = torch.ones((1), device=self.device)
+        if self.args.level == "model":
+            self.modules_count = 1
+            self.model.forward_handle = self.model.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+
+        elif self.args.level == "block":
+            if "PreResNet" in self.args.model_name:
+                for name, module in self.model.named_modules():
+                    if re.match(r"^layer[0-9]\.[0-9]+$", name):
+                        self.modules_count += 1
+                        module.forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+
+        elif self.args.level == "layer":
+            modules = []
+            def remove_sequential(network, modules):
+                for layer in network.children():
+                    if len(list(layer.children())) > 0:
+                        remove_sequential(layer,modules)
+                    if len(list(layer.children())) == 0:
+                        modules.append(layer)
+            remove_sequential(self.model,modules)
+
+
+            for i,module in enumerate(modules):
+                self.modules_count += 1
+                module.forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+
+    def add_homomorphic_regularization(self):
+        self.modules_count = 0
+        self.aux_y = torch.ones((1), device=self.device)
+        if self.args.level == "model":
+            self.modules_count = 1
+            self.model.forward_handle = self.model.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
+
+        elif self.args.level == "block":
+            if "PreResNet" in self.args.model_name:
+                for name, module in self.model.named_modules():
+                    if re.match(r"^layer[0-9]\.[0-9]+$", name):
+                        module.forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
+
+        elif self.args.level == "layer":
+            modules = []
+            def remove_sequential(network, modules):
+                for layer in network.children():
+                    if len(list(layer.children())) > 0:
+                        remove_sequential(layer,modules)
+                    if len(list(layer.children())) == 0:
+                        modules.append(layer)
+            remove_sequential(self.model,modules)
+
+
+            for i,module in enumerate(modules):
+                self.modules_count += 1
+                module.forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
+
+    def get_k_weights(self):
+        eps = self.remainder * (self.t-(self.k/(self.n-1)))/(self.n-1)
+
+        weights = torch.zeros(self.n)
+        weights[:self.n-self.k-1] = self.centroid + eps/(self.n-self.k-1)
+        weights[self.n-self.k-1] = self.remainder - eps
+        weights[self.n-self.k:] = 0.0
+
+        return weights.unsqueeze(0)
+    
     def train(self):
         print("train:")
         self.model.train()
@@ -189,11 +350,26 @@ class Solver(object):
         total = 0
 
         for batch_num, (data, target) in enumerate(self.train_loader):
+            batch_idx = self.get_batch_plot_idx()
+
             data, target = data.to(self.device), target.to(self.device)
             self.optimizer.zero_grad()
 
             output = self.model(data)
             loss = self.criterion(output, target)
+            
+            if self.args.lipschitz_regularization:
+                self.lipschitz_loss = (self.lipschitz_loss * self.args.lipschitz_regularization_loss_factor)/self.modules_count
+                loss += self.lipschitz_loss
+                self.writer.add_scalar("Train/Lipschitz Batch_Loss", self.lipschitz_loss.item(), batch_idx) # TODO the loss values suck, they are either ~1.0 or ~0.0
+
+            if self.args.homomorphic_regularization:
+                self.homomorphic_loss = (self.homomorphic_loss * self.args.homomorphic_regularization_factor)/self.modules_count
+                loss += self.homomorphic_loss
+                self.writer.add_scalar("Train/Homomorphic Batch_Loss", self.homomorphic_loss.item(), batch_idx)
+
+            self.writer.add_scalar("Train/Batch_Loss", loss.item(), batch_idx)
+            
             if self.args.half:
                 with amp.scale_loss(loss, self.optimizer) as scaled_loss:
                     scaled_loss.backward()
@@ -201,7 +377,7 @@ class Solver(object):
                 loss.backward()
             self.optimizer.step()
             total_loss += loss.item()
-            self.writer.add_scalar("Train/Batch Loss", loss.item(), self.get_batch_plot_idx())
+
 
             prediction = torch.max(output, 1)
             total += target.size(0)
@@ -227,7 +403,7 @@ class Solver(object):
                 data, target = data.to(self.device), target.to(self.device)
                 output = self.model(data)
                 loss = self.criterion(output, target)
-                self.writer.add_scalar("Test/Batch Loss", loss.item(), self.get_batch_plot_idx())
+                self.writer.add_scalar("Test/Batch_Loss", loss.item(), self.get_batch_plot_idx())
                 total_loss += loss.item()
                 prediction = torch.max(output, 1)
                 total += target.size(0)
@@ -257,9 +433,19 @@ class Solver(object):
         self.load_data()
         self.load_model()
 
+        if self.args.lipschitz_regularization:
+            self.add_lipschitz_regularization()
+
+        if self.args.homomorphic_regularization:
+            self.add_homomorphic_regularization()
+
         best_accuracy = 0
         try:
             for epoch in range(1, self.args.epoch + 1):
+                if self.args.lipschitz_regularization and epoch in self.args.lipschitz_noise_factor_milestines:
+                    self.args.lipschitz_noise_factor *= self.args.lipschitz_noise_factor_gamma
+                if self.args.homomorphic_regularization and epoch in self.args.homomorphic_k_hot_milestines:
+                    self.t -= (1.0/self.args.homomorphic_k_inputs) * self.args.homomorphic_k_hot_gamma 
                 print("\n===> epoch: %d/%d" % (epoch, self.args.epoch))
 
                 train_result = self.train()
@@ -277,7 +463,13 @@ class Solver(object):
                 self.writer.add_scalar("Test/Accuracy", accuracy, epoch)
 
                 self.writer.add_scalar("Model/Norm", self.get_model_norm(), epoch)
-                self.writer.add_scalar("Train Params/Learning rate", self.scheduler.get_last_lr()[0], epoch)
+                self.writer.add_scalar("Train_Params/Learning_rate", self.scheduler.get_last_lr()[0], epoch)
+                if self.args.lipschitz_regularization:
+                    self.writer.add_scalar("Train_Params/Lipschitz_noise_factor", self.args.lipschitz_noise_factor, epoch)
+                if self.args.homomorphic_regularization:
+                    self.centroid = 1/(self.n-self.k) - self.k/((self.n-self.k)*(self.n-self.k-1)) + (self.t*(self.n-1))/((self.n-self.k)*(self.n-self.k-1))
+                    self.remainder = 1 - (self.centroid * (self.n-self.k-1))
+                    self.writer.add_scalar("Train_Params/Homomorphic_K-hot", self.n-self.t * (self.n - 1), epoch)
 
                 if best_accuracy < test_result[1]:
                     best_accuracy = test_result[1]
@@ -288,6 +480,8 @@ class Solver(object):
                     self.save(epoch, 0)
 
                 if self.args.scheduler == "MultiStepLR":
+                    self.scheduler.step()
+                elif self.args.scheduler == "ReduceLROnPlateau":
                     self.scheduler.step(train_result[0])
                 elif self.args.scheduler == "OneCycleLR":
                     pass
