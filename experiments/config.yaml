@@ -7,7 +7,7 @@ defaults:
   - save: default
   - scheduler: milestones
   - specific: baseline
-  - dataset_model_specific: ${defaults.2.dataset}/${defaults.7.specific}/${defaults.1.model}
+  - dataset_model_specific: ${defaults.2.dataset}/${defaults.1.model}/${defaults.7.specific}
     optional: true
 
 model: ${model_name}(${model_depth})

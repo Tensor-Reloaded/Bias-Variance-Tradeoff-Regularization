@@ -1,0 +1,18 @@
+level: "block"
+distance_function: "cosine_loss"
+save_dir: "Bias-Variance"
+
+lipschitz_regularization: True
+homomorphic_regularization: True
+
+lipschitz_regularization_loss_factor: 1.0
+homomorphic_regularization_factor: 1.0
+
+lipschitz_noise_factor: 0.02
+lipschitz_noise_factor_gamma: 1.5
+
+homomorphic_k_inputs: 4
+homomorphic_k_hot_gamma: 0.5
+
+lipschitz_noise_factor_milestines: [30,60,90,120,150,190]
+homomorphic_k_hot_milestines: [5,30,60,90,120,150]
