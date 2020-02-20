@@ -209,9 +209,9 @@ class Solver(object):
 
         if self.args.distance_function == "cosine_loss":
             if self.lipschitz_loss is None:
-                self.lipschitz_loss = F.cosine_embedding_loss(X,y,self.lip_aux_y,margin=0.1)
+                self.lipschitz_loss = F.cosine_embedding_loss(X,y,self.lip_aux_y,margin=0.0)
             else:
-                self.lipschitz_loss += F.cosine_embedding_loss(X,y,self.lip_aux_y,margin=0.1)
+                self.lipschitz_loss += F.cosine_embedding_loss(X,y,self.lip_aux_y,margin=0.0)
         elif self.args.distance_function == "mse":
             if self.lipschitz_loss is None:
                 self.lipschitz_loss = F.mse_loss(X,y)
@@ -255,9 +255,9 @@ class Solver(object):
 
         if self.args.distance_function == "cosine_loss":
             if self.homomorphic_loss is None:
-                self.homomorphic_loss = F.cosine_embedding_loss(data,targets,self.homo_aux_y, margin=0.1)
+                self.homomorphic_loss = F.cosine_embedding_loss(data,targets,self.homo_aux_y, margin=0.0)
             else:
-                self.homomorphic_loss += F.cosine_embedding_loss(data,targets,self.homo_aux_y, margin=0.1)
+                self.homomorphic_loss += F.cosine_embedding_loss(data,targets,self.homo_aux_y, margin=0.0)
         elif self.args.distance_function == "mse":
             if self.homomorphic_loss is None:
                 self.homomorphic_loss = F.mse_loss(data,targets)
