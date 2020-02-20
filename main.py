@@ -59,8 +59,6 @@ class Solver(object):
     def __init__(self, config):
         self.model = None
         self.args = config
-        self.hooks = []
-        self.hooks_index = 0
         self.criterion = None
         self.optimizer = None
         self.scheduler = None
@@ -199,22 +197,21 @@ class Solver(object):
         return self.batch_plot_idx - 1
 
     def forward_lipschitz_loss_hook_fn(self,module,X,y):
-        if not self.model.training  or not self.args.lipschitz_regularization or (self.args.level == "layer" and not hasattr(module,'weight')) or self.hooks[self.hooks_index] != "lipschitz" or module.hook_in_progress:
+        if not self.model.training  or not self.args.lipschitz_regularization or (self.args.level == "layer" and not hasattr(module,'weight')) or module.hook_in_progress:
             return
-        module.eval()
         module.hook_in_progress = True
+        module.eval()
 
         X = X[0]
         noise = self.args.lipschitz_noise_factor * torch.std(X, dim=0) * torch.randn(X.size(), device=self.device) 
         X = X + noise
         X = module(X)
 
-
         if self.args.distance_function == "cosine_loss":
             if self.lipschitz_loss is None:
-                self.lipschitz_loss = F.cosine_embedding_loss(X,y,self.aux_y)
+                self.lipschitz_loss = F.cosine_embedding_loss(X,y,self.aux_y,margin=0.1)
             else:
-                self.lipschitz_loss += F.cosine_embedding_loss(X,y,self.aux_y)
+                self.lipschitz_loss += F.cosine_embedding_loss(X,y,self.aux_y,margin=0.1)
         elif self.args.distance_function == "mse":
             if self.lipschitz_loss is None:
                 self.lipschitz_loss = F.mse_loss(X,y)
@@ -230,13 +227,12 @@ class Solver(object):
             exit()
 
         module.hook_in_progress = False
-        self.hooks_index = (self.hooks_index + 1) % len(self.hooks) 
 
     def forward_homomorphic_loss_hook_fn(self,module,X,y):
-        if not self.model.training  or not self.args.homomorphic_regularization or (self.args.level == "layer" and not hasattr(module,'weight')) or self.hooks[self.hooks_index] != "homomorphic" or module.hook_in_progress:
+        if not self.model.training  or not self.args.homomorphic_regularization or (self.args.level == "layer" and not hasattr(module,'weight')) or module.hook_in_progress or self.sum_groups == 1:
             return
-        module.eval()
         module.hook_in_progress = True
+        module.eval()
 
         X = X[0]
         shuffled_idxs = torch.randperm(y.size(0), device=self.device, dtype=torch.long)
@@ -249,19 +245,19 @@ class Solver(object):
             to_sum_groups.append(X[mbi].unsqueeze(0))
             to_sum_targets.append(y[mbi].unsqueeze(0))
 
-        k_weights = torch.full((1,self.n),1/self.n)
+        k_weights = torch.full((1,self.sum_groups),1/self.sum_groups, device=self.device)
         if self.sum_groups > 1:
             k_weights = self.get_k_weights()
-        k_weights = k_weights.to(self.device)
+
         data = (torch.cat(to_sum_groups, dim=0).T*k_weights[:,:self.sum_groups]).T.sum(0)
         data = module(data)
         targets = (torch.cat(to_sum_targets, dim=0).T*k_weights[:,:self.sum_groups]).T.sum(0)
 
         if self.args.distance_function == "cosine_loss":
             if self.homomorphic_loss is None:
-                self.homomorphic_loss = F.cosine_embedding_loss(data,targets,self.aux_y)
+                self.homomorphic_loss = F.cosine_embedding_loss(data,targets,self.aux_y, margin=0.1)
             else:
-                self.homomorphic_loss.add(F.cosine_embedding_loss(data,targets,self.aux_y))
+                self.homomorphic_loss += F.cosine_embedding_loss(data,targets,self.aux_y, margin=0.1)
         elif self.args.distance_function == "mse":
             if self.homomorphic_loss is None:
                 self.homomorphic_loss = F.mse_loss(data,targets)
@@ -275,16 +271,15 @@ class Solver(object):
         else:
             print("Homomorphic distance function not implemented")
             exit()
-        
         module.hook_in_progress = False
-        self.hooks_index = (self.hooks_index + 1) % len(self.hooks)
 
     def add_lipschitz_regularization(self):
         self.modules_count = 0
-        self.aux_y = torch.ones((1), device=self.device)
+        self.aux_y = torch.ones((1), device=self.device) * (-1)
         if self.args.level == "model":
             self.modules_count = 1
             self.model.lipschitz_forward_handle = self.model.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+            self.model.hook_in_progress = False
 
         elif self.args.level == "block":
             if "PreResNet" in self.args.model_name:
@@ -292,6 +287,7 @@ class Solver(object):
                     if re.match(r"^layer[0-9]\.[0-9]+$", name):
                         self.modules_count += 1
                         module.lipschitz_forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+                        module.hook_in_progress = False
 
         elif self.args.level == "layer":
             modules = []
@@ -307,7 +303,7 @@ class Solver(object):
             for i,module in enumerate(modules):
                 self.modules_count += 1
                 module.lipschitz_forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
-        self.hooks.append("lipschitz")
+                module.hook_in_progress = False
 
     def add_homomorphic_regularization(self):
         self.modules_count = 0
@@ -339,12 +335,11 @@ class Solver(object):
                 self.modules_count += 1
                 module.homomorphic_forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
                 module.hook_in_progress = False
-        self.hooks.append("homomorphic")
 
     def get_k_weights(self):
         eps = self.remainder * (self.t-(self.k/(self.n-1)))/(self.n-1)
 
-        weights = torch.zeros(self.n)
+        weights = torch.zeros(self.sum_groups, device=self.device)
         weights[:self.n-self.k-1] = self.centroid + eps/(self.n-self.k-1)
         weights[self.n-self.k-1] = self.remainder - eps
         weights[self.n-self.k:] = 0.0
@@ -375,7 +370,7 @@ class Solver(object):
                 loss += self.lipschitz_loss
                 self.writer.add_scalar("Train/Lipschitz_Batch_Loss", self.lipschitz_loss.item(), batch_idx) # TODO the loss values suck, they are either ~1.0 or ~0.0
 
-            if self.args.homomorphic_regularization:
+            if self.args.homomorphic_regularization and self.sum_groups > 1:
                 self.homomorphic_loss = (self.homomorphic_loss * self.args.homomorphic_regularization_factor)/self.modules_count
                 loss += self.homomorphic_loss
                 self.writer.add_scalar("Train/Homomorphic_Batch_Loss", self.homomorphic_loss.item(), batch_idx)
@@ -458,7 +453,7 @@ class Solver(object):
                     self.args.lipschitz_noise_factor *= self.args.lipschitz_noise_factor_gamma
                 if self.args.homomorphic_regularization and epoch in self.args.homomorphic_k_hot_milestines:
                     self.t -= (1.0/self.args.homomorphic_k_inputs) * self.args.homomorphic_k_hot_gamma 
-                    self.k = int(floor(self.t * (self.n - 1)))
+                    self.k = int(np.floor(self.t * (self.n - 1)))
                     self.sum_groups = self.n - self.k
                     self.centroid = 1/(self.n-self.k) - self.k/((self.n-self.k)*(self.n-self.k-1)) + (self.t*(self.n-1))/((self.n-self.k)*(self.n-self.k-1))
                     self.remainder = 1 - (self.centroid * (self.n-self.k-1))

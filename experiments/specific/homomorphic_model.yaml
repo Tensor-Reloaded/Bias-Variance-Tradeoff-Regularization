@@ -5,7 +5,7 @@ aux_save_dir: "Homomorphic-Model-lvl"
 lipschitz_regularization: False
 homomorphic_regularization: True
 
-homomorphic_regularization_factor: 1.0
+homomorphic_regularization_factor: 0.2
 
 homomorphic_k_inputs: 4
 homomorphic_k_hot_gamma: 0.5

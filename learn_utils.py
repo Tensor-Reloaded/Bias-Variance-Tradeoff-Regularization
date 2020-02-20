@@ -51,6 +51,7 @@ class EarlyStopping(object):
             return False
 
         if np.isnan(metrics):
+            print("NaN metric found, stopping")
             return True
 
         if self.is_better(metrics, self.best):
@@ -58,7 +59,6 @@ class EarlyStopping(object):
             self.best = metrics
         else:
             self.num_bad_epochs += 1
-
         if self.num_bad_epochs >= self.patience:
             return True
         return False
