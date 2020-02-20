@@ -3,5 +3,5 @@ mixpo: 1
 all_metrics: False
 cuda: True
 cuda_device: 0
-seed:
+seed: 0
 progress_bar: False

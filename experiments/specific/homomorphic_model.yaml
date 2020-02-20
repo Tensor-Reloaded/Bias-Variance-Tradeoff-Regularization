@@ -1,0 +1,15 @@
+level: "block"
+distance_function: "mse"
+aux_save_dir: "Homomorphic-Model-lvl"
+
+lipschitz_regularization: False
+homomorphic_regularization: True
+
+homomorphic_regularization_factor: 1.0
+
+lipschitz_noise_factor_gamma: 1.5
+
+homomorphic_k_inputs: 4
+homomorphic_k_hot_gamma: 0.5
+
+homomorphic_k_hot_milestines: [5,30,60,90,120,150]

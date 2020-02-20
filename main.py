@@ -4,6 +4,7 @@ import pprint
 import argparse
 import pickle
 import os
+import re
 from shutil import copyfile
 
 import numpy as np
@@ -52,6 +53,8 @@ def main(config: DictConfig):
 
     solver = Solver(config)
     solver.run()
+    del solver
+    torch.cuda.empty_cache() 
 
 
 class Solver(object):
@@ -75,7 +78,7 @@ class Solver(object):
             self.t = 1.0
             self.n = self.args.homomorphic_k_inputs
             self.k = self.n-1
-            self.centroid = 1/(self.n-self.k) - self.k/((self.n-self.k)*(self.n-self.k-1)) + (self.t*(self.n-1))/((self.n-self.k)*(self.n-self.k-1))
+            self.centroid = 1.0 #1/(self.n-self.k) - self.k/((self.n-self.k)*(self.n-self.k-1)) + (self.t*(self.n-1))/((self.n-self.k)*(self.n-self.k-1))
             self.remainder = 1 - (self.centroid * (self.n-self.k-1))
             self.sum_groups = self.n - self.k
 
@@ -203,7 +206,6 @@ class Solver(object):
         module.forward_handle.remove()
 
         X = X[0]
-        y = module(X)
         noise = self.args.lipschitz_noise_factor * torch.std(X, dim=0) * torch.randn(X.size(), device=self.device) 
         X = X + noise
         X = module(X)
@@ -230,8 +232,9 @@ class Solver(object):
         module.forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
 
     def forward_homomorphic_loss_hook_fn(self,module,X,y):
-        if not self.model.training  or not self.args.homomorphic_regularization:
+        if not self.model.training  or not self.args.homomorphic_regularization or (self.args.level == "layer" and not hasattr(module,'weight')):
             return
+        module.eval()
 
         module.forward_handle.remove()
 
@@ -355,18 +358,21 @@ class Solver(object):
             data, target = data.to(self.device), target.to(self.device)
             self.optimizer.zero_grad()
 
+            self.model.train()
+            self.lipschitz_loss = None
+            self.homomorphic_loss = None
             output = self.model(data)
             loss = self.criterion(output, target)
             
             if self.args.lipschitz_regularization:
                 self.lipschitz_loss = (self.lipschitz_loss * self.args.lipschitz_regularization_loss_factor)/self.modules_count
                 loss += self.lipschitz_loss
-                self.writer.add_scalar("Train/Lipschitz Batch_Loss", self.lipschitz_loss.item(), batch_idx) # TODO the loss values suck, they are either ~1.0 or ~0.0
+                self.writer.add_scalar("Train/Lipschitz_Batch_Loss", self.lipschitz_loss.item(), batch_idx) # TODO the loss values suck, they are either ~1.0 or ~0.0
 
             if self.args.homomorphic_regularization:
                 self.homomorphic_loss = (self.homomorphic_loss * self.args.homomorphic_regularization_factor)/self.modules_count
                 loss += self.homomorphic_loss
-                self.writer.add_scalar("Train/Homomorphic Batch_Loss", self.homomorphic_loss.item(), batch_idx)
+                self.writer.add_scalar("Train/Homomorphic_Batch_Loss", self.homomorphic_loss.item(), batch_idx)
 
             self.writer.add_scalar("Train/Batch_Loss", loss.item(), batch_idx)
             
@@ -446,6 +452,13 @@ class Solver(object):
                     self.args.lipschitz_noise_factor *= self.args.lipschitz_noise_factor_gamma
                 if self.args.homomorphic_regularization and epoch in self.args.homomorphic_k_hot_milestines:
                     self.t -= (1.0/self.args.homomorphic_k_inputs) * self.args.homomorphic_k_hot_gamma 
+                    self.k = int(floor(self.t * (self.n - 1)))
+                    self.centroid = 1/(self.n-self.k) - self.k/((self.n-self.k)*(self.n-self.k-1)) + (self.t*(self.n-1))/((self.n-self.k)*(self.n-self.k-1))
+                    self.remainder = 1 - (self.centroid * (self.n-self.k-1))
+                
+                if self.args.scheduler in ["OneCycleLR"] and epoch % (self.args.epoch//(self.args.nr_cycle-1)) == 1:
+                    self.scheduler = optim.lr_scheduler.OneCycleLR(self.optimizer,max_lr=self.args.lr, total_steps=None, epochs=self.args.epoch//(self.args.nr_cycle-1), steps_per_epoch=len(self.train_loader), pct_start=self.args.pct_start, anneal_strategy=self.args.anneal_strategy, cycle_momentum=self.args.cycle_momentum, base_momentum=self.args.base_momentum, max_momentum=self.args.max_momentum, div_factor=self.args.div_factor, final_div_factor=self.args.final_div_factor, last_epoch=self.args.last_epoch)
+
                 print("\n===> epoch: %d/%d" % (epoch, self.args.epoch))
 
                 train_result = self.train()
@@ -467,8 +480,6 @@ class Solver(object):
                 if self.args.lipschitz_regularization:
                     self.writer.add_scalar("Train_Params/Lipschitz_noise_factor", self.args.lipschitz_noise_factor, epoch)
                 if self.args.homomorphic_regularization:
-                    self.centroid = 1/(self.n-self.k) - self.k/((self.n-self.k)*(self.n-self.k-1)) + (self.t*(self.n-1))/((self.n-self.k)*(self.n-self.k-1))
-                    self.remainder = 1 - (self.centroid * (self.n-self.k-1))
                     self.writer.add_scalar("Train_Params/Homomorphic_K-hot", self.n-self.t * (self.n - 1), epoch)
 
                 if best_accuracy < test_result[1]:
@@ -504,6 +515,9 @@ class Solver(object):
         with open("runs/" + self.args.save_dir + "/README.md", 'a+') as f:
             f.write("\n## Accuracy\n %.3f%%" % (best_accuracy * 100))
         print("Saved best accuracy checkpoint")
+
+        del self.model, self.train_loader, self.test_loader, self.optimizer
+        torch.cuda.empty_cache() 
 
     def get_model_norm(self, norm_type=2):
         norm = 0.0

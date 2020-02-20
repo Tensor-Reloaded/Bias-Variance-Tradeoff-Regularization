@@ -1,6 +1,6 @@
 level: "model"
 distance_function: "mse"
-save_dir: "Bias-Variance-Model-lvl"
+aux_save_dir: "Bias-Variance-Model-lvl"
 
 lipschitz_regularization: True
 homomorphic_regularization: True
