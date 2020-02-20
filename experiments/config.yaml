@@ -1,6 +1,6 @@
 defaults:
   - common: default
-  - model: PreResNet
+  - model: PreResNet56
   - dataset: cifar10
   - optimizer: baseline
   - initializer: default
