@@ -53,14 +53,14 @@ def main(config: DictConfig):
 
     solver = Solver(config)
     solver.run()
-    del solver
-    torch.cuda.empty_cache() 
 
 
 class Solver(object):
     def __init__(self, config):
         self.model = None
         self.args = config
+        self.hooks = []
+        self.hooks_index = 0
         self.criterion = None
         self.optimizer = None
         self.scheduler = None
@@ -79,8 +79,8 @@ class Solver(object):
             self.n = self.args.homomorphic_k_inputs
             self.k = self.n-1
             self.centroid = 1.0 #1/(self.n-self.k) - self.k/((self.n-self.k)*(self.n-self.k-1)) + (self.t*(self.n-1))/((self.n-self.k)*(self.n-self.k-1))
-            self.remainder = 1 - (self.centroid * (self.n-self.k-1))
-            self.sum_groups = self.n - self.k
+            self.remainder = 0.0 #1 - (self.centroid * (self.n-self.k-1))
+            self.sum_groups = 1 #self.n - self.k
 
         self.batch_plot_idx = 0
 
@@ -199,16 +199,16 @@ class Solver(object):
         return self.batch_plot_idx - 1
 
     def forward_lipschitz_loss_hook_fn(self,module,X,y):
-        if not self.model.training  or not self.args.lipschitz_regularization or (self.args.level == "layer" and not hasattr(module,'weight')):
+        if not self.model.training  or not self.args.lipschitz_regularization or (self.args.level == "layer" and not hasattr(module,'weight')) or self.hooks[self.hooks_index] != "lipschitz" or module.hook_in_progress:
             return
         module.eval()
-        
-        module.lipschitz_forward_handle.remove()
+        module.hook_in_progress = True
 
         X = X[0]
         noise = self.args.lipschitz_noise_factor * torch.std(X, dim=0) * torch.randn(X.size(), device=self.device) 
         X = X + noise
         X = module(X)
+
 
         if self.args.distance_function == "cosine_loss":
             if self.lipschitz_loss is None:
@@ -228,15 +228,15 @@ class Solver(object):
         else:
             print("lipschitz distance function not implemented")
             exit()
-        
-        module.lipschitz_forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+
+        module.hook_in_progress = False
+        self.hooks_index = (self.hooks_index + 1) % len(self.hooks) 
 
     def forward_homomorphic_loss_hook_fn(self,module,X,y):
-        if not self.model.training  or not self.args.homomorphic_regularization or (self.args.level == "layer" and not hasattr(module,'weight')):
+        if not self.model.training  or not self.args.homomorphic_regularization or (self.args.level == "layer" and not hasattr(module,'weight')) or self.hooks[self.hooks_index] != "homomorphic" or module.hook_in_progress:
             return
         module.eval()
-
-        module.homomorphic_forward_handle.remove()
+        module.hook_in_progress = True
 
         X = X[0]
         shuffled_idxs = torch.randperm(y.size(0), device=self.device, dtype=torch.long)
@@ -250,7 +250,7 @@ class Solver(object):
             to_sum_targets.append(y[mbi].unsqueeze(0))
 
         k_weights = torch.full((1,self.n),1/self.n)
-        if self.args.gradual_cascade:
+        if self.sum_groups > 1:
             k_weights = self.get_k_weights()
         k_weights = k_weights.to(self.device)
         data = (torch.cat(to_sum_groups, dim=0).T*k_weights[:,:self.sum_groups]).T.sum(0)
@@ -276,7 +276,8 @@ class Solver(object):
             print("Homomorphic distance function not implemented")
             exit()
         
-        module.homomorphic_forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
+        module.hook_in_progress = False
+        self.hooks_index = (self.hooks_index + 1) % len(self.hooks)
 
     def add_lipschitz_regularization(self):
         self.modules_count = 0
@@ -306,6 +307,7 @@ class Solver(object):
             for i,module in enumerate(modules):
                 self.modules_count += 1
                 module.lipschitz_forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+        self.hooks.append("lipschitz")
 
     def add_homomorphic_regularization(self):
         self.modules_count = 0
@@ -313,12 +315,14 @@ class Solver(object):
         if self.args.level == "model":
             self.modules_count = 1
             self.model.homomorphic_forward_handle = self.model.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
+            self.model.hook_in_progress = False
 
         elif self.args.level == "block":
             if "PreResNet" in self.args.model_name:
                 for name, module in self.model.named_modules():
                     if re.match(r"^layer[0-9]\.[0-9]+$", name):
                         module.homomorphic_forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
+                        module.hook_in_progress = False
 
         elif self.args.level == "layer":
             modules = []
@@ -334,6 +338,8 @@ class Solver(object):
             for i,module in enumerate(modules):
                 self.modules_count += 1
                 module.homomorphic_forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
+                module.hook_in_progress = False
+        self.hooks.append("homomorphic")
 
     def get_k_weights(self):
         eps = self.remainder * (self.t-(self.k/(self.n-1)))/(self.n-1)
@@ -453,8 +459,10 @@ class Solver(object):
                 if self.args.homomorphic_regularization and epoch in self.args.homomorphic_k_hot_milestines:
                     self.t -= (1.0/self.args.homomorphic_k_inputs) * self.args.homomorphic_k_hot_gamma 
                     self.k = int(floor(self.t * (self.n - 1)))
+                    self.sum_groups = self.n - self.k
                     self.centroid = 1/(self.n-self.k) - self.k/((self.n-self.k)*(self.n-self.k-1)) + (self.t*(self.n-1))/((self.n-self.k)*(self.n-self.k-1))
                     self.remainder = 1 - (self.centroid * (self.n-self.k-1))
+                    
                 
                 if self.args.scheduler in ["OneCycleLR"] and epoch % (self.args.epoch//(self.args.nr_cycle-1)) == 1:
                     self.scheduler = optim.lr_scheduler.OneCycleLR(self.optimizer,max_lr=self.args.lr, total_steps=None, epochs=self.args.epoch//(self.args.nr_cycle-1), steps_per_epoch=len(self.train_loader), pct_start=self.args.pct_start, anneal_strategy=self.args.anneal_strategy, cycle_momentum=self.args.cycle_momentum, base_momentum=self.args.base_momentum, max_momentum=self.args.max_momentum, div_factor=self.args.div_factor, final_div_factor=self.args.final_div_factor, last_epoch=self.args.last_epoch)
@@ -515,9 +523,6 @@ class Solver(object):
         with open("runs/" + self.args.save_dir + "/README.md", 'a+') as f:
             f.write("\n## Accuracy\n %.3f%%" % (best_accuracy * 100))
         print("Saved best accuracy checkpoint")
-
-        del self.model, self.train_loader, self.test_loader, self.optimizer
-        torch.cuda.empty_cache() 
 
     def get_model_norm(self, norm_type=2):
         norm = 0.0
