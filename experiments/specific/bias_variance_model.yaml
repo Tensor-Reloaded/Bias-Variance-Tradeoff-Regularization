@@ -8,7 +8,7 @@ homomorphic_regularization: True
 lipschitz_regularization_loss_factor: 1.0
 homomorphic_regularization_factor: 1.0
 
-lipschitz_noise_factor: 0.05
+lipschitz_noise_factor: 0.25
 lipschitz_noise_factor_gamma: 1.5
 
 homomorphic_k_inputs: 4
