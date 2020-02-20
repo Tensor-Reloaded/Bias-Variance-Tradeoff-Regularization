@@ -209,9 +209,9 @@ class Solver(object):
 
         if self.args.distance_function == "cosine_loss":
             if self.lipschitz_loss is None:
-                self.lipschitz_loss = F.cosine_embedding_loss(X,y,self.aux_y,margin=0.1)
+                self.lipschitz_loss = F.cosine_embedding_loss(X,y,self.lip_aux_y,margin=0.1)
             else:
-                self.lipschitz_loss += F.cosine_embedding_loss(X,y,self.aux_y,margin=0.1)
+                self.lipschitz_loss += F.cosine_embedding_loss(X,y,self.lip_aux_y,margin=0.1)
         elif self.args.distance_function == "mse":
             if self.lipschitz_loss is None:
                 self.lipschitz_loss = F.mse_loss(X,y)
@@ -255,9 +255,9 @@ class Solver(object):
 
         if self.args.distance_function == "cosine_loss":
             if self.homomorphic_loss is None:
-                self.homomorphic_loss = F.cosine_embedding_loss(data,targets,self.aux_y, margin=0.1)
+                self.homomorphic_loss = F.cosine_embedding_loss(data,targets,self.homo_aux_y, margin=0.1)
             else:
-                self.homomorphic_loss += F.cosine_embedding_loss(data,targets,self.aux_y, margin=0.1)
+                self.homomorphic_loss += F.cosine_embedding_loss(data,targets,self.homo_aux_y, margin=0.1)
         elif self.args.distance_function == "mse":
             if self.homomorphic_loss is None:
                 self.homomorphic_loss = F.mse_loss(data,targets)
@@ -275,7 +275,7 @@ class Solver(object):
 
     def add_lipschitz_regularization(self):
         self.modules_count = 0
-        self.aux_y = torch.ones((1), device=self.device) * (-1)
+        self.lip_aux_y = torch.ones((1), device=self.device)
         if self.args.level == "model":
             self.modules_count = 1
             self.model.lipschitz_forward_handle = self.model.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
@@ -307,7 +307,7 @@ class Solver(object):
 
     def add_homomorphic_regularization(self):
         self.modules_count = 0
-        self.aux_y = torch.ones((1), device=self.device)
+        self.homo_aux_y = torch.ones((1), device=self.device)
         if self.args.level == "model":
             self.modules_count = 1
             self.model.homomorphic_forward_handle = self.model.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
