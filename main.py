@@ -203,7 +203,7 @@ class Solver(object):
             return
         module.eval()
         
-        module.forward_handle.remove()
+        module.lipschitz_forward_handle.remove()
 
         X = X[0]
         noise = self.args.lipschitz_noise_factor * torch.std(X, dim=0) * torch.randn(X.size(), device=self.device) 
@@ -229,14 +229,14 @@ class Solver(object):
             print("lipschitz distance function not implemented")
             exit()
         
-        module.forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+        module.lipschitz_forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
 
     def forward_homomorphic_loss_hook_fn(self,module,X,y):
         if not self.model.training  or not self.args.homomorphic_regularization or (self.args.level == "layer" and not hasattr(module,'weight')):
             return
         module.eval()
 
-        module.forward_handle.remove()
+        module.homomorphic_forward_handle.remove()
 
         X = X[0]
         shuffled_idxs = torch.randperm(y.size(0), device=self.device, dtype=torch.long)
@@ -276,21 +276,21 @@ class Solver(object):
             print("Homomorphic distance function not implemented")
             exit()
         
-        module.forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
+        module.homomorphic_forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
 
     def add_lipschitz_regularization(self):
         self.modules_count = 0
         self.aux_y = torch.ones((1), device=self.device)
         if self.args.level == "model":
             self.modules_count = 1
-            self.model.forward_handle = self.model.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+            self.model.lipschitz_forward_handle = self.model.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
 
         elif self.args.level == "block":
             if "PreResNet" in self.args.model_name:
                 for name, module in self.model.named_modules():
                     if re.match(r"^layer[0-9]\.[0-9]+$", name):
                         self.modules_count += 1
-                        module.forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+                        module.lipschitz_forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
 
         elif self.args.level == "layer":
             modules = []
@@ -305,20 +305,20 @@ class Solver(object):
 
             for i,module in enumerate(modules):
                 self.modules_count += 1
-                module.forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+                module.lipschitz_forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
 
     def add_homomorphic_regularization(self):
         self.modules_count = 0
         self.aux_y = torch.ones((1), device=self.device)
         if self.args.level == "model":
             self.modules_count = 1
-            self.model.forward_handle = self.model.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
+            self.model.homomorphic_forward_handle = self.model.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
 
         elif self.args.level == "block":
             if "PreResNet" in self.args.model_name:
                 for name, module in self.model.named_modules():
                     if re.match(r"^layer[0-9]\.[0-9]+$", name):
-                        module.forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
+                        module.homomorphic_forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
 
         elif self.args.level == "layer":
             modules = []
@@ -333,7 +333,7 @@ class Solver(object):
 
             for i,module in enumerate(modules):
                 self.modules_count += 1
-                module.forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
+                module.homomorphic_forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
 
     def get_k_weights(self):
         eps = self.remainder * (self.t-(self.k/(self.n-1)))/(self.n-1)
