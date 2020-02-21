@@ -1,5 +1,5 @@
 level: "block"
-distance_function: "cosine_loss"
+distance_function: "mse"
 aux_save_dir: "Homomorphic-Block-lvl"
 
 lipschitz_regularization: False

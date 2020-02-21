@@ -1,5 +1,5 @@
 level: "layer"
-distance_function: "cosine_loss"
+distance_function: "mse"
 aux_save_dir: "Homomorphic-Layer-lvl"
 
 lipschitz_regularization: False
