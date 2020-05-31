@@ -234,6 +234,7 @@ class Solver(object):
 
         self.lipschitz_loss += self.compute_lips_homo_loss(X, y)
 
+        module.train()
         module.hook_in_progress = False
 
     def forward_homomorphic_loss_hook_fn(self,module,X,y):
@@ -263,6 +264,7 @@ class Solver(object):
 
         self.homomorphic_loss += self.compute_lips_homo_loss(data, targets)
 
+        module.train()
         module.hook_in_progress = False
 
     def add_regularization_forward_hook(self, handle_name, hook):
