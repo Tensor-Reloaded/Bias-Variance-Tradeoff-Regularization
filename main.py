@@ -222,7 +222,7 @@ class Solver(object):
         raise ValueError("lipschitz distance function not implemented")
 
     def forward_lipschitz_loss_hook_fn(self,module,X,y):
-        if not self.model.training or not self.args.lipschitz_regularization or (self.args.level == "layer" and not hasattr(module,'weight')) or module.hook_in_progress:
+        if not self.model.training or not self.args.lipschitz_regularization or module.hook_in_progress:
             return
         module.hook_in_progress = True
         module.eval()
@@ -237,7 +237,7 @@ class Solver(object):
         module.hook_in_progress = False
 
     def forward_homomorphic_loss_hook_fn(self,module,X,y):
-        if not self.model.training  or not self.args.homomorphic_regularization or (self.args.level == "layer" and not hasattr(module,'weight')) or module.hook_in_progress or self.sum_groups == 1:
+        if not self.model.training  or not self.args.homomorphic_regularization or module.hook_in_progress or self.sum_groups == 1:
             return
         module.hook_in_progress = True
         module.eval()
@@ -289,16 +289,19 @@ class Solver(object):
             def get_leaf_modules(network):
                 leafs = []
                 for layer in network.children():
-                    if len(list(layer.children())) > 0:
-                        leafs.extend(get_leaf_modules(layer))
-                    if len(list(layer.children())) == 0:
+                    is_leaf = len(list(layer.children())) == 0
+                    if is_leaf:
                         leafs.append(layer)
+                    else:
+                        leafs.extend(get_leaf_modules(layer))
                 return leafs
 
             # This assumes that self.model is not a leaf module!
             leaf_modules = get_leaf_modules(self.model)
 
             for i, module in enumerate(leaf_modules):
+                if not hasattr(module, 'weight'):
+                    continue
                 self.modules_count += 1
                 handle = module.register_forward_hook(hook)
                 setattr(module, handle_name, handle)
@@ -335,7 +338,7 @@ class Solver(object):
         total = 0
 
         for batch_num, (data, target) in enumerate(self.train_loader):
-            batch_idx = self.get_batch_plot_idx()
+            batch_plot_idx = self.get_batch_plot_idx()
 
             data, target = data.to(self.device), target.to(self.device)
             self.optimizer.zero_grad()
@@ -345,18 +348,21 @@ class Solver(object):
             self.homomorphic_loss = 0.0
             output = self.model(data)
             loss = self.criterion(output, target)
-            
+
+            # TODO: All .item() calls force CUDA synchronization... Should allow disabling them.
+            self.writer.add_scalar("Train/Criterion_Batch_Loss", loss.item(), batch_plot_idx)
+
             if self.args.lipschitz_regularization:
                 self.lipschitz_loss = (self.lipschitz_loss * self.args.lipschitz_regularization_loss_factor) / self.modules_count
                 loss += self.lipschitz_loss
-                self.writer.add_scalar("Train/Lipschitz_Batch_Loss", self.lipschitz_loss.item(), batch_idx) # TODO the loss values suck, they are either ~1.0 or ~0.0
+                self.writer.add_scalar("Train/Lipschitz_Batch_Loss", self.lipschitz_loss.item(), batch_plot_idx) # TODO the loss values suck, they are either ~1.0 or ~0.0
 
             if self.args.homomorphic_regularization and self.sum_groups > 1:
                 self.homomorphic_loss = (self.homomorphic_loss * self.args.homomorphic_regularization_factor) / self.modules_count
                 loss += self.homomorphic_loss
-                self.writer.add_scalar("Train/Homomorphic_Batch_Loss", self.homomorphic_loss.item(), batch_idx)
+                self.writer.add_scalar("Train/Homomorphic_Batch_Loss", self.homomorphic_loss.item(), batch_plot_idx)
 
-            self.writer.add_scalar("Train/Batch_Loss", loss.item(), batch_idx)
+            self.writer.add_scalar("Train/Batch_Loss", loss.item(), batch_plot_idx)
             
             if self.args.half:
                 with amp.scale_loss(loss, self.optimizer) as scaled_loss:
@@ -369,13 +375,14 @@ class Solver(object):
             prediction = torch.max(output, 1)
             total += target.size(0)
 
-            correct += torch.sum((prediction[1] == target).float()).item() # TODO: Is this correct?
+            correct += torch.sum((prediction[1] == target).float()).item()
 
             if self.args.progress_bar:
                 progress_bar(batch_num, len(self.train_loader), 'Loss: %.4f | Acc: %.3f%% (%d/%d)'
                              % (total_loss / (batch_num + 1), 100.0 * correct/total, correct, total))
             if self.args.scheduler == "OneCycleLR":
                 self.scheduler.step()
+
         return total_loss, correct / total
 
     def test(self):
