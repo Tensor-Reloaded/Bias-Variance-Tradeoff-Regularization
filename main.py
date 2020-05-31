@@ -229,10 +229,7 @@ class Solver(object):
         X = X + noise
         X = module(X)
 
-        if self.lipschitz_loss is None:
-            self.lipschitz_loss = self.compute_lips_homo_loss(X, y)
-        else:
-            self.lipschitz_loss += self.compute_lips_homo_loss(X, y)
+        self.lipschitz_loss += self.compute_lips_homo_loss(X, y)
 
         module.hook_in_progress = False
 
@@ -261,10 +258,7 @@ class Solver(object):
         data = module(data)
         targets = (torch.cat(to_sum_targets, dim=0).T*k_weights[:,:self.sum_groups]).T.sum(0)
 
-        if self.homomorphic_loss is None:
-            self.homomorphic_loss = self.compute_lips_homo_loss(data, targets)
-        else:
-            self.homomorphic_loss += self.compute_lips_homo_loss(data, targets)
+        self.homomorphic_loss += self.compute_lips_homo_loss(data, targets)
 
         module.hook_in_progress = False
 
@@ -344,8 +338,8 @@ class Solver(object):
             self.optimizer.zero_grad()
 
             self.model.train()
-            self.lipschitz_loss = None
-            self.homomorphic_loss = None
+            self.lipschitz_loss = 0.0
+            self.homomorphic_loss = 0.0
             output = self.model(data)
             loss = self.criterion(output, target)
             
