@@ -39,6 +39,11 @@ except ImportError:
 
 storage_dir = "../storage/"
 
+
+def nll_loss(got, want):
+    return (-F.softmax(want)+F.softmax(got).exp().sum(0).log()).mean()
+
+
 @hydra.main(config_path='experiments/config.yaml', strict=True)
 def main(config: DictConfig):
     global storage_dir
@@ -89,6 +94,10 @@ class Solver(object):
             self.nr_classes = len(CIFAR_10_CLASSES)
         elif self.args.dataset == "CIFAR-100":
             self.nr_classes = len(CIFAR_100_CLASSES)
+
+        self.lipschitz_loss = None
+        self.homomorphic_loss = None
+        self.COSINE_EMBEDDING_LOSS_TARGET = None
 
     def load_data(self):
         if "CIFAR" in self.args.dataset:
@@ -192,12 +201,24 @@ class Solver(object):
                 self.model, self.optimizer = amp.initialize(self.model, self.optimizer, opt_level=f"O{self.args.mixpo}",
                                                             patch_torch_functions=True, keep_batchnorm_fp32=True)
 
+        self.COSINE_EMBEDDING_LOSS_TARGET = torch.ones(1, device=self.device)  # TODO: ones(1, ...) or ones((1,), ...) ?
+
     def get_batch_plot_idx(self):
         self.batch_plot_idx += 1
         return self.batch_plot_idx - 1
 
+    def compute_lips_homo_loss(self, got, want):
+        if self.args.distance_function == "cosine_loss":
+            return F.cosine_embedding_loss(got, want, self.COSINE_EMBEDDING_LOSS_TARGET,margin=0.0)
+        elif self.args.distance_function == "mse":
+            return F.mse_loss(got, want)
+        elif self.args.distance_function == "nll":
+            return nll_loss(got, want)
+
+        raise ValueError("lipschitz distance function not implemented")
+
     def forward_lipschitz_loss_hook_fn(self,module,X,y):
-        if not self.model.training  or not self.args.lipschitz_regularization or (self.args.level == "layer" and not hasattr(module,'weight')) or module.hook_in_progress:
+        if not self.model.training or not self.args.lipschitz_regularization or (self.args.level == "layer" and not hasattr(module,'weight')) or module.hook_in_progress:
             return
         module.hook_in_progress = True
         module.eval()
@@ -207,24 +228,10 @@ class Solver(object):
         X = X + noise
         X = module(X)
 
-        if self.args.distance_function == "cosine_loss":
-            if self.lipschitz_loss is None:
-                self.lipschitz_loss = F.cosine_embedding_loss(X,y,self.lip_aux_y,margin=0.0)
-            else:
-                self.lipschitz_loss += F.cosine_embedding_loss(X,y,self.lip_aux_y,margin=0.0)
-        elif self.args.distance_function == "mse":
-            if self.lipschitz_loss is None:
-                self.lipschitz_loss = F.mse_loss(X,y)
-            else:
-                self.lipschitz_loss += F.mse_loss(X,y)
-        elif self.args.distance_function == "nll":
-            if self.lipschitz_loss is None:
-                self.lipschitz_loss =  (-F.softmax(y)+F.softmax(X).exp().sum(0).log()).mean()
-            else:
-                self.lipschitz_loss += (-F.softmax(y)+F.softmax(X).exp().sum(0).log()).mean()
+        if self.lipschitz_loss is None:
+            self.lipschitz_loss = self.compute_lips_homo_loss(X, y)
         else:
-            print("lipschitz distance function not implemented")
-            exit()
+            self.lipschitz_loss += self.compute_lips_homo_loss(X, y)
 
         module.hook_in_progress = False
 
@@ -253,29 +260,15 @@ class Solver(object):
         data = module(data)
         targets = (torch.cat(to_sum_targets, dim=0).T*k_weights[:,:self.sum_groups]).T.sum(0)
 
-        if self.args.distance_function == "cosine_loss":
-            if self.homomorphic_loss is None:
-                self.homomorphic_loss = F.cosine_embedding_loss(data,targets,self.homo_aux_y, margin=0.0)
-            else:
-                self.homomorphic_loss += F.cosine_embedding_loss(data,targets,self.homo_aux_y, margin=0.0)
-        elif self.args.distance_function == "mse":
-            if self.homomorphic_loss is None:
-                self.homomorphic_loss = F.mse_loss(data,targets)
-            else:
-                self.homomorphic_loss += F.mse_loss(data,targets)
-        elif self.args.distance_function == "nll":
-            if self.homomorphic_loss is None:
-                self.homomorphic_loss =  (-F.softmax(targets)+F.softmax(data).exp().sum(0).log()).mean()
-            else:
-                self.homomorphic_loss += (-F.softmax(targets)+F.softmax(data).exp().sum(0).log()).mean()
+        if self.homomorphic_loss is None:
+            self.homomorphic_loss = self.compute_lips_homo_loss(data, targets)
         else:
-            print("Homomorphic distance function not implemented")
-            exit()
+            self.homomorphic_loss += self.compute_lips_homo_loss(data, targets)
+
         module.hook_in_progress = False
 
     def add_lipschitz_regularization(self):
         self.modules_count = 0
-        self.lip_aux_y = torch.ones((1), device=self.device)
         if self.args.level == "model":
             self.modules_count = 1
             self.model.lipschitz_forward_handle = self.model.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
@@ -299,7 +292,6 @@ class Solver(object):
                         modules.append(layer)
             remove_sequential(self.model,modules)
 
-
             for i,module in enumerate(modules):
                 self.modules_count += 1
                 module.lipschitz_forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
@@ -307,7 +299,6 @@ class Solver(object):
 
     def add_homomorphic_regularization(self):
         self.modules_count = 0
-        self.homo_aux_y = torch.ones((1), device=self.device)
         if self.args.level == "model":
             self.modules_count = 1
             self.model.homomorphic_forward_handle = self.model.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
@@ -337,12 +328,16 @@ class Solver(object):
                 module.hook_in_progress = False
 
     def get_k_weights(self):
-        eps = self.remainder * (self.t-(self.k/(self.n-1)))/(self.n-1)
+        t = self.t
+        n = self.n
+        k = self.k
+
+        eps = self.remainder * (t - (k / (n - 1))) / (n - 1)
 
         weights = torch.zeros(self.sum_groups, device=self.device)
-        weights[:self.n-self.k-1] = self.centroid + eps/(self.n-self.k-1)
-        weights[self.n-self.k-1] = self.remainder - eps
-        weights[self.n-self.k:] = 0.0
+        weights[:n - k - 1] = self.centroid + eps / (n - k - 1)
+        weights[n - k - 1] = self.remainder - eps
+        weights[n - k:] = 0.0
 
         return weights.unsqueeze(0)
     
@@ -366,12 +361,12 @@ class Solver(object):
             loss = self.criterion(output, target)
             
             if self.args.lipschitz_regularization:
-                self.lipschitz_loss = (self.lipschitz_loss * self.args.lipschitz_regularization_loss_factor)/self.modules_count
+                self.lipschitz_loss = (self.lipschitz_loss * self.args.lipschitz_regularization_loss_factor) / self.modules_count
                 loss += self.lipschitz_loss
                 self.writer.add_scalar("Train/Lipschitz_Batch_Loss", self.lipschitz_loss.item(), batch_idx) # TODO the loss values suck, they are either ~1.0 or ~0.0
 
             if self.args.homomorphic_regularization and self.sum_groups > 1:
-                self.homomorphic_loss = (self.homomorphic_loss * self.args.homomorphic_regularization_factor)/self.modules_count
+                self.homomorphic_loss = (self.homomorphic_loss * self.args.homomorphic_regularization_factor) / self.modules_count
                 loss += self.homomorphic_loss
                 self.writer.add_scalar("Train/Homomorphic_Batch_Loss", self.homomorphic_loss.item(), batch_idx)
 
@@ -385,11 +380,10 @@ class Solver(object):
             self.optimizer.step()
             total_loss += loss.item()
 
-
             prediction = torch.max(output, 1)
             total += target.size(0)
 
-            correct += torch.sum((prediction[1] == target).float()).item()
+            correct += torch.sum((prediction[1] == target).float()).item() # TODO: Is this correct?
 
             if self.args.progress_bar:
                 progress_bar(batch_num, len(self.train_loader), 'Loss: %.4f | Acc: %.3f%% (%d/%d)'
@@ -424,8 +418,8 @@ class Solver(object):
         return total_loss, correct/total
 
     def save(self, epoch, accuracy, tag=None):
-        if tag != None:
-            tag = "_"+tag
+        if tag is not None:
+            tag = "_" + tag
         else:
             tag = ""
         model_out_path = self.save_dir + \
@@ -454,10 +448,11 @@ class Solver(object):
                 if self.args.homomorphic_regularization and epoch in self.args.homomorphic_k_hot_milestines:
                     self.t -= (1.0/self.args.homomorphic_k_inputs) * self.args.homomorphic_k_hot_gamma 
                     self.k = int(np.floor(self.t * (self.n - 1)))
-                    self.sum_groups = self.n - self.k
-                    self.centroid = 1/(self.n-self.k) - self.k/((self.n-self.k)*(self.n-self.k-1)) + (self.t*(self.n-1))/((self.n-self.k)*(self.n-self.k-1))
-                    self.remainder = 1 - (self.centroid * (self.n-self.k-1))
-                    
+                    n = self.n
+                    k = self.k
+                    self.sum_groups = n - k
+                    self.centroid = 1 / (n - k) - k / ((n - k) * (n - k - 1)) + (self.t * (n - 1)) / ((n - k) * (n - k - 1))
+                    self.remainder = 1 - (self.centroid * (n - k - 1))
                 
                 if self.args.scheduler in ["OneCycleLR"] and epoch % (self.args.epoch//(self.args.nr_cycle-1)) == 1:
                     self.scheduler = optim.lr_scheduler.OneCycleLR(self.optimizer,max_lr=self.args.lr, total_steps=None, epochs=self.args.epoch//(self.args.nr_cycle-1), steps_per_epoch=len(self.train_loader), pct_start=self.args.pct_start, anneal_strategy=self.args.anneal_strategy, cycle_momentum=self.args.cycle_momentum, base_momentum=self.args.base_momentum, max_momentum=self.args.max_momentum, div_factor=self.args.div_factor, final_div_factor=self.args.final_div_factor, last_epoch=self.args.last_epoch)
