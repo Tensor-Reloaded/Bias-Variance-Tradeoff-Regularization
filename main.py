@@ -97,6 +97,7 @@ class Solver(object):
 
         self.lipschitz_loss = None
         self.homomorphic_loss = None
+        self.modules_count = None
         self.COSINE_EMBEDDING_LOSS_TARGET = None
 
     def load_data(self):
@@ -267,11 +268,15 @@ class Solver(object):
 
         module.hook_in_progress = False
 
-    def add_lipschitz_regularization(self):
+    def add_regularization_forward_hook(self, handle_name, hook):
+        # TODO: This is the same variable that gets computed twice for homo and lips...
+        #       We can't allow layer-wise lipschitz and block-wise homomorphic currently.
         self.modules_count = 0
+
         if self.args.level == "model":
             self.modules_count = 1
-            self.model.lipschitz_forward_handle = self.model.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+            handle = self.model.register_forward_hook(hook)
+            setattr(self.model, handle_name, handle)
             self.model.hook_in_progress = False
 
         elif self.args.level == "block":
@@ -279,53 +284,33 @@ class Solver(object):
                 for name, module in self.model.named_modules():
                     if re.match(r"^layer[0-9]\.[0-9]+$", name):
                         self.modules_count += 1
-                        module.lipschitz_forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+                        handle = module.register_forward_hook(hook)
+                        setattr(module, handle_name, handle)
                         module.hook_in_progress = False
 
         elif self.args.level == "layer":
             modules = []
+
             def remove_sequential(network, modules):
                 for layer in network.children():
                     if len(list(layer.children())) > 0:
-                        remove_sequential(layer,modules)
+                        remove_sequential(layer, modules)
                     if len(list(layer.children())) == 0:
                         modules.append(layer)
-            remove_sequential(self.model,modules)
 
-            for i,module in enumerate(modules):
+            remove_sequential(self.model, modules)
+
+            for i, module in enumerate(modules):
                 self.modules_count += 1
-                module.lipschitz_forward_handle = module.register_forward_hook(self.forward_lipschitz_loss_hook_fn)
+                handle = module.register_forward_hook(hook)
+                setattr(module, handle_name, handle)
                 module.hook_in_progress = False
+
+    def add_lipschitz_regularization(self):
+        self.add_regularization_forward_hook('lipschitz_handle', self.forward_lipschitz_loss_hook_fn)
 
     def add_homomorphic_regularization(self):
-        self.modules_count = 0
-        if self.args.level == "model":
-            self.modules_count = 1
-            self.model.homomorphic_forward_handle = self.model.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
-            self.model.hook_in_progress = False
-
-        elif self.args.level == "block":
-            if "PreResNet" in self.args.model_name:
-                for name, module in self.model.named_modules():
-                    if re.match(r"^layer[0-9]\.[0-9]+$", name):
-                        module.homomorphic_forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
-                        module.hook_in_progress = False
-
-        elif self.args.level == "layer":
-            modules = []
-            def remove_sequential(network, modules):
-                for layer in network.children():
-                    if len(list(layer.children())) > 0:
-                        remove_sequential(layer,modules)
-                    if len(list(layer.children())) == 0:
-                        modules.append(layer)
-            remove_sequential(self.model,modules)
-
-
-            for i,module in enumerate(modules):
-                self.modules_count += 1
-                module.homomorphic_forward_handle = module.register_forward_hook(self.forward_homomorphic_loss_hook_fn)
-                module.hook_in_progress = False
+        self.add_regularization_forward_hook('homomorphic_handle', self.forward_homomorphic_loss_hook_fn)
 
     def get_k_weights(self):
         t = self.t
@@ -343,6 +328,9 @@ class Solver(object):
     
     def train(self):
         print("train:")
+        if self.args.lipschitz_regularization or self.args.homomorphic_regularization:
+            assert self.modules_count > 0
+
         self.model.train()
         total_loss = 0
         correct = 0
