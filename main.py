@@ -75,7 +75,10 @@ class Solver(object):
         if not self.args.save_dir:
             self.writer = SummaryWriter()
         else:
-            self.writer = SummaryWriter(log_dir="runs/" + self.args.save_dir)
+            log_dir = "runs/" + self.args.save_dir
+            log_dir = os.path.abspath(log_dir)
+            self.writer = SummaryWriter(log_dir=log_dir)
+            print(f'Started tensorboardX.SummaryWriter(log_dir={log_dir})')
 
         if self.args.homomorphic_regularization:
             self.t = 1.0
