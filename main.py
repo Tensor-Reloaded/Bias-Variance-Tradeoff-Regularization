@@ -289,18 +289,19 @@ class Solver(object):
                         module.hook_in_progress = False
 
         elif self.args.level == "layer":
-            modules = []
-
-            def remove_sequential(network, modules):
+            def get_leaf_modules(network):
+                leafs = []
                 for layer in network.children():
                     if len(list(layer.children())) > 0:
-                        remove_sequential(layer, modules)
+                        leafs.extend(get_leaf_modules(layer))
                     if len(list(layer.children())) == 0:
-                        modules.append(layer)
+                        leafs.append(layer)
+                return leafs
 
-            remove_sequential(self.model, modules)
+            # This assumes that self.model is not a leaf module!
+            leaf_modules = get_leaf_modules(self.model)
 
-            for i, module in enumerate(modules):
+            for i, module in enumerate(leaf_modules):
                 self.modules_count += 1
                 handle = module.register_forward_hook(hook)
                 setattr(module, handle_name, handle)
