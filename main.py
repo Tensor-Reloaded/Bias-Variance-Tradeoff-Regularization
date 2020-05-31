@@ -452,14 +452,16 @@ class Solver(object):
 
                 print("\n===> epoch: %d/%d" % (epoch, self.args.epoch))
 
-                train_result = self.train()
+                with Timer('epoch_train'):
+                    train_result = self.train()
 
                 loss = train_result[0]
                 accuracy = train_result[1]
                 self.writer.add_scalar("Train/Loss", loss, epoch)
                 self.writer.add_scalar("Train/Accuracy", accuracy, epoch)
 
-                test_result = self.test()
+                with Timer('epoch_test'):
+                    test_result = self.test()
 
                 loss = test_result[0]
                 accuracy = test_result[1]

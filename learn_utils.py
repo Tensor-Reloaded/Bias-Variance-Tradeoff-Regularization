@@ -4,6 +4,7 @@
     - progress_bar: progress bar mimic xlua.progress.
 '''
 import random
+import time
 
 import numpy as np
 import torch
@@ -115,3 +116,21 @@ def compute_weights_l1_norm(model):
         norm_sum += torch.sum(torch.abs(param))
     return norm_sum
 
+
+class Timer(object):
+    def __init__(self, name, verbose=True):
+        self.name = name
+        self.verbose = verbose
+        self.start = None
+        self.end = None
+        self.elapsed_seconds = None
+
+    def __enter__(self):
+        self.start = time.time()
+
+    def __exit__(self, *args):
+        self.end = time.time()
+        self.elapsed_seconds = self.end - self.start
+
+        if self.verbose:
+            print(f'{self.name} done in {self.elapsed_seconds} sec')
