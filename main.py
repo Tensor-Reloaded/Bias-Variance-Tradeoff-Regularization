@@ -454,7 +454,7 @@ class Solver(object):
 
                 print("\n===> epoch: %d/%d" % (epoch, self.args.epoch))
 
-                with Timer('epoch_train'):
+                with Timer('epoch_train', verbose=False):
                     train_result = self.train()
 
                 loss = train_result[0]
@@ -462,7 +462,7 @@ class Solver(object):
                 self.writer.add_scalar("Train/Loss", loss, epoch)
                 self.writer.add_scalar("Train/Accuracy", accuracy, epoch)
 
-                with Timer('epoch_test'):
+                with Timer('epoch_test', verbose=False):
                     test_result = self.test()
 
                 loss = test_result[0]
