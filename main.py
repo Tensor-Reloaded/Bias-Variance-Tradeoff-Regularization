@@ -116,6 +116,8 @@ class Solver(object):
             train_transform = transforms.Compose([transforms.ToTensor()])
             test_transform = transforms.Compose([transforms.ToTensor()])
 
+        pin_memory = self.args.cuda
+
         if self.args.dataset == "CIFAR-10":
             self.train_set = torchvision.datasets.CIFAR10(
                 root=storage_dir, train=True, download=True, transform=train_transform)
@@ -125,7 +127,7 @@ class Solver(object):
 
         if self.args.train_subset is None:
             self.train_loader = torch.utils.data.DataLoader(
-                dataset=self.train_set, batch_size=self.args.train_batch_size, shuffle=True)
+                dataset=self.train_set, batch_size=self.args.train_batch_size, shuffle=True, pin_memory=pin_memory)
         else:
             filename = "subset_indices/subset_balanced_{}_{}.data".format(
                 self.dataset, self.args.train_subset)
@@ -161,7 +163,7 @@ class Solver(object):
                 root=storage_dir, train=False, download=True, transform=test_transform)
 
         self.test_loader = torch.utils.data.DataLoader(
-            dataset=test_set, batch_size=self.args.test_batch_size, shuffle=False)
+            dataset=test_set, batch_size=self.args.test_batch_size, shuffle=False, pin_memory=pin_memory)
 
     def load_model(self):
         if self.cuda:
@@ -228,7 +230,8 @@ class Solver(object):
         module.eval()
 
         X = X[0]
-        noise = self.args.lipschitz_noise_factor * torch.std(X, dim=0) * torch.randn(X.size(), device=self.device) 
+        # noise = torch.randn(X.size(), device=self.device) * self.args.lipschitz_noise_factor
+        noise = torch.randn(X.size(), device=self.device) * torch.std(X, dim=0) * self.args.lipschitz_noise_factor
         X = X + noise
         X = module(X)
 
@@ -238,7 +241,7 @@ class Solver(object):
         module.hook_in_progress = False
 
     def forward_homomorphic_loss_hook_fn(self,module,X,y):
-        if not self.model.training  or not self.args.homomorphic_regularization or module.hook_in_progress or self.sum_groups == 1:
+        if not self.model.training or not self.args.homomorphic_regularization or module.hook_in_progress or self.sum_groups == 1:
             return
         module.hook_in_progress = True
         module.eval()
@@ -350,9 +353,6 @@ class Solver(object):
             self.homomorphic_loss = 0.0
             output = self.model(data)
             loss = self.criterion(output, target)
-
-            # TODO: All .item() calls force CUDA synchronization... Should allow disabling them.
-            self.writer.add_scalar("Train/Criterion_Batch_Loss", loss.item(), batch_plot_idx)
 
             if self.args.lipschitz_regularization:
                 self.lipschitz_loss = (self.lipschitz_loss * self.args.lipschitz_regularization_loss_factor) / self.modules_count
