@@ -47,7 +47,7 @@ class Bottleneck(nn.Module):
         return out
 
 class PreResNet(nn.Module):
-    def __init__(self, depth=164, dataset='cifar10', cfg=None):
+    def __init__(self, depth=164, dataset='CIFAR-10', cfg=None):
         super(PreResNet, self).__init__()
         assert (depth - 2) % 9 == 0, 'depth should be 9n+2'
 
@@ -70,10 +70,12 @@ class PreResNet(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(8)
 
-        if dataset == 'cifar10':
+        if dataset == 'CIFAR-10':
             self.fc = nn.Linear(cfg[-1], 10)
-        elif dataset == 'cifar100':
+        elif dataset == 'CIFAR-100':
             self.fc = nn.Linear(cfg[-1], 100)
+        else:
+            raise ValueError('Unknown dataset ' + dataset)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):

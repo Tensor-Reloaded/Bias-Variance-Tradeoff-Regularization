@@ -10,7 +10,7 @@ defaults:
   - dataset_model_specific: ${defaults.2.dataset}/${defaults.1.model}/${defaults.7.specific}
     optional: true
 
-model: ${model_name}(${model_depth})
+model: ${model_name}(${model_depth}, dataset='${dataset_name}')
 dataset: ${dataset_name}
 scheduler: ${scheduler_name}
 save_dir: "${model}/${aux_save_dir}/${distance_function}/${seed}"
