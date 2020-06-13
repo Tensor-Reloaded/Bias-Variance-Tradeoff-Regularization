@@ -6,7 +6,7 @@ defaults:
   - initializer: default
   - save: default
   - scheduler: milestones
-  - specific: baseline
+  - specific: bias_variance_block_const_sum_groups
   - dataset_model_specific: ${defaults.2.dataset}/${defaults.1.model}/${defaults.7.specific}
     optional: true
 
