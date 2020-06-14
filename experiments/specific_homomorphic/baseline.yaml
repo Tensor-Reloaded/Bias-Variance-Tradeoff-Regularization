@@ -1,0 +1,2 @@
+homomorphic_regularization: False
+homomorphic_save_dir: "Homomorphic-Baseline"

@@ -1,0 +1,12 @@
+homomorphic_save_dir: "Homomorphic-Block"
+
+homomorphic_regularization: True
+
+homomorphic_regularization_factor: 0.2
+
+homomorphic_const_sum_groups: False
+
+homomorphic_k_inputs: 4
+homomorphic_k_hot_gamma: 0.5
+
+homomorphic_k_hot_milestines: [5,30,60,90,120,150]

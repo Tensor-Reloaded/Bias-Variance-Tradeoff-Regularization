@@ -6,13 +6,15 @@ defaults:
   - initializer: default
   - save: default
   - scheduler: milestones
-  - specific: bias_variance_block_const_sum_groups
-  - dataset_model_specific: ${defaults.2.dataset}/${defaults.1.model}/${defaults.7.specific}
-    optional: true
+  - specific_lipschitz: lipschitz_block
+  - specific_homomorphic: homomorphic_block_const_sum_groups
+  - specific_common: block
+#  - dataset_model_specific: ${defaults.2.dataset}/${defaults.1.model}/${defaults.7.specific}
+#    optional: true
 
 model: ${model_name}(${model_depth}, dataset='${dataset_name}')
 dataset: ${dataset_name}
 scheduler: ${scheduler_name}
-save_dir: "${model}/${aux_save_dir}/${distance_function}/${seed}"
+save_dir: "${model}/${lipschitz_save_dir}_${homomorphic_save_dir}/${distance_function}/${seed}"
 
 load_model: ""

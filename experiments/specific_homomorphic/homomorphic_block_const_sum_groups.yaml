@@ -1,0 +1,8 @@
+homomorphic_save_dir: "Homomorphic-Block-Const"
+
+homomorphic_regularization: True
+
+homomorphic_regularization_factor: 1.0
+
+homomorphic_const_sum_groups: True
+homomorphic_k_inputs: 2

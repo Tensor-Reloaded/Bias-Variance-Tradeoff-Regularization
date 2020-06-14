@@ -1,0 +1,2 @@
+lipschitz_regularization: False
+lipschitz_save_dir: "Lipschitz-Baseline"
