@@ -221,7 +221,7 @@ class Solver(object):
         elif self.args.distance_function == "nll":
             return nll_loss(got, want)
 
-        raise ValueError("lipschitz distance function not implemented")
+        raise ValueError("lipschitz/homomorphic distance function not implemented")
 
     def forward_lipschitz_loss_hook_fn(self,module,X,y):
         if not self.model.training or not self.args.lipschitz_regularization or module.hook_in_progress:
@@ -257,9 +257,10 @@ class Solver(object):
             to_sum_groups.append(X[mbi].unsqueeze(0))
             to_sum_targets.append(y[mbi].unsqueeze(0))
 
+        assert self.sum_groups > 1
+
         k_weights = torch.full((1,self.sum_groups),1/self.sum_groups, device=self.device)
-        if self.sum_groups > 1:
-            k_weights = self.get_k_weights()
+        k_weights = self.get_k_weights()
 
         data = (torch.cat(to_sum_groups, dim=0).T*k_weights[:,:self.sum_groups]).T.sum(0)
         data = module(data)
@@ -319,6 +320,9 @@ class Solver(object):
         self.add_regularization_forward_hook('homomorphic_handle', self.forward_homomorphic_loss_hook_fn)
 
     def get_k_weights(self):
+        if self.args.homomorphic_const_sum_groups:
+            return torch.empty(self.sum_groups, device=self.device).fill_(1.0 / self.sum_groups).unsqueeze(0)
+
         t = self.t
         n = self.n
         k = self.k
@@ -435,12 +439,15 @@ class Solver(object):
         if self.args.homomorphic_regularization:
             self.add_homomorphic_regularization()
 
+
         best_accuracy = 0
         try:
             for epoch in range(1, self.args.epoch + 1):
                 if self.args.lipschitz_regularization and epoch in self.args.lipschitz_noise_factor_milestines:
                     self.args.lipschitz_noise_factor *= self.args.lipschitz_noise_factor_gamma
-                if self.args.homomorphic_regularization and epoch in self.args.homomorphic_k_hot_milestines:
+                if self.args.homomorphic_regularization and \
+                        not self.args.homomorphic_const_sum_groups and \
+                        epoch in self.args.homomorphic_k_hot_milestines:
                     self.t -= (1.0/self.args.homomorphic_k_inputs) * self.args.homomorphic_k_hot_gamma 
                     self.k = int(np.floor(self.t * (self.n - 1)))
                     n = self.n
@@ -448,7 +455,9 @@ class Solver(object):
                     self.sum_groups = n - k
                     self.centroid = 1 / (n - k) - k / ((n - k) * (n - k - 1)) + (self.t * (n - 1)) / ((n - k) * (n - k - 1))
                     self.remainder = 1 - (self.centroid * (n - k - 1))
-                
+                elif self.args.homomorphic_regularization and self.args.homomorphic_const_sum_groups:
+                    self.sum_groups = self.args.homomorphic_k_inputs
+
                 if self.args.scheduler in ["OneCycleLR"] and epoch % (self.args.epoch//(self.args.nr_cycle-1)) == 1:
                     self.scheduler = optim.lr_scheduler.OneCycleLR(self.optimizer,max_lr=self.args.lr, total_steps=None, epochs=self.args.epoch//(self.args.nr_cycle-1), steps_per_epoch=len(self.train_loader), pct_start=self.args.pct_start, anneal_strategy=self.args.anneal_strategy, cycle_momentum=self.args.cycle_momentum, base_momentum=self.args.base_momentum, max_momentum=self.args.max_momentum, div_factor=self.args.div_factor, final_div_factor=self.args.final_div_factor, last_epoch=self.args.last_epoch)
 
@@ -474,8 +483,11 @@ class Solver(object):
                 self.writer.add_scalar("Train_Params/Learning_rate", self.scheduler.get_last_lr()[0], epoch)
                 if self.args.lipschitz_regularization:
                     self.writer.add_scalar("Train_Params/Lipschitz_noise_factor", self.args.lipschitz_noise_factor, epoch)
-                if self.args.homomorphic_regularization:
+
+                if self.args.homomorphic_regularization and not self.args.homomorphic_const_sum_groups:
                     self.writer.add_scalar("Train_Params/Homomorphic_K-hot", self.n-self.t * (self.n - 1), epoch)
+                elif self.args.homomorphic_regularization and self.args.homomorphic_const_sum_groups:
+                    self.writer.add_scalar("Train_Params/Homomorphic_K-hot", self.sum_groups, epoch)
 
                 if best_accuracy < test_result[1]:
                     best_accuracy = test_result[1]
