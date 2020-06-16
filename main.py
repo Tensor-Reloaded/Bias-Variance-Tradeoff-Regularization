@@ -229,7 +229,8 @@ class Solver(object):
         module.hook_in_progress = True
         # module.eval()
 
-        X = X[0]
+        X = X[0].detach()
+        y = y.detach()
         # noise = torch.randn(X.size(), device=self.device) * self.args.lipschitz_noise_factor
         noise = torch.randn(X.size(), device=self.device) * torch.std(X, dim=0) * self.args.lipschitz_noise_factor
         X = X + noise
