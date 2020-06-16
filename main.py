@@ -227,7 +227,7 @@ class Solver(object):
         if not self.model.training or not self.args.lipschitz_regularization or module.hook_in_progress:
             return
         module.hook_in_progress = True
-        module.eval()
+        # module.eval()
 
         X = X[0]
         # noise = torch.randn(X.size(), device=self.device) * self.args.lipschitz_noise_factor
@@ -237,16 +237,17 @@ class Solver(object):
 
         self.lipschitz_loss += self.compute_lips_homo_loss(X, y)
 
-        module.train()
+        # module.train()
         module.hook_in_progress = False
 
     def forward_homomorphic_loss_hook_fn(self,module,X,y):
         if not self.model.training or not self.args.homomorphic_regularization or module.hook_in_progress or self.sum_groups == 1:
             return
         module.hook_in_progress = True
-        module.eval()
+        # module.eval()
 
-        X = X[0]
+        X = X[0].detach()
+        y = y.detach()
         shuffled_idxs = torch.randperm(y.size(0), device=self.device, dtype=torch.long)
         shuffled_idxs = shuffled_idxs[:y.size(0)-y.size(0) % self.sum_groups]
         mini_batches_idxs = shuffled_idxs.split(y.size(0) // self.sum_groups)
@@ -259,7 +260,6 @@ class Solver(object):
 
         assert self.sum_groups > 1
 
-        k_weights = torch.full((1,self.sum_groups),1/self.sum_groups, device=self.device)
         k_weights = self.get_k_weights()
 
         data = (torch.cat(to_sum_groups, dim=0).T*k_weights[:,:self.sum_groups]).T.sum(0)
@@ -268,7 +268,7 @@ class Solver(object):
 
         self.homomorphic_loss += self.compute_lips_homo_loss(data, targets)
 
-        module.train()
+        # module.train()
         module.hook_in_progress = False
 
     def add_regularization_forward_hook(self, handle_name, hook):
