@@ -130,7 +130,7 @@ class Solver(object):
                 dataset=self.train_set, batch_size=self.args.train_batch_size, shuffle=True, pin_memory=pin_memory)
         else:
             filename = "subset_indices/subset_balanced_{}_{}.data".format(
-                self.dataset, self.args.train_subset)
+                self.args.dataset, self.args.train_subset)
             if os.path.isfile(filename):
                 with open(filename, 'rb') as f:
                     subset_indices = pickle.load(f)
@@ -150,10 +150,6 @@ class Solver(object):
             self.train_loader = torch.utils.data.DataLoader(
                 dataset=self.train_set, batch_size=self.args.train_batch_size,
                 sampler=SubsetRandomSampler(subset_indices))
-            if self.args.validate:
-                self.validate_loader = torch.utils.data.DataLoader(
-                    dataset=self.train_set, batch_size=self.args.train_batch_size,
-                    sampler=SubsetRandomSampler(subset_indices))
 
         if self.args.dataset == "CIFAR-10":
             test_set = torchvision.datasets.CIFAR10(
