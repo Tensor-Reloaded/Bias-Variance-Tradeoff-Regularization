@@ -8,7 +8,7 @@ defaults:
   - scheduler: milestones
   - specific_lipschitz: lipschitz_block
   - specific_homomorphic: homomorphic_block_const_sum_groups
-  - specific_common: block
+  - specific_common: baseline
 #  - dataset_model_specific: ${defaults.2.dataset}/${defaults.1.model}/${defaults.7.specific}
 #    optional: true
 
