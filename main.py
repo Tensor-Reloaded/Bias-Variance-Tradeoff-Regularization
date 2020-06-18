@@ -270,23 +270,19 @@ class Solver(object):
         module.hook_in_progress = False
 
     def add_regularization_forward_hook(self, level, handle_name, hook):
-        modules_count = 0
+        modules_to_hook = []
 
         if level == "model":
-            modules_count = 1
-            handle = self.model.register_forward_hook(hook)
-            setattr(self.model, handle_name, handle)
-            self.model.hook_in_progress = False
-
+            modules_to_hook.append(self.model)
+        elif level == "superblock":
+            for module in self.model.children():
+                if hasattr(module, 'custom_name') and module.custom_name == 'SuperBlock':
+                    modules_to_hook.append(module)
         elif level == "block":
-            if "PreResNet" in self.args.model_name:
-                for name, module in self.model.named_modules():
-                    if re.match(r"^layer[0-9]\.[0-9]+$", name):
-                        modules_count += 1
-                        handle = module.register_forward_hook(hook)
-                        setattr(module, handle_name, handle)
-                        module.hook_in_progress = False
-
+            assert "PreResNet" in self.args.model_name
+            for name, module in self.model.named_modules():
+                if re.match(r"^layer[0-9]\.[0-9]+$", name):
+                    modules_to_hook.append(module)
         elif level == "layer":
             def get_leaf_modules(network):
                 leafs = []
@@ -304,12 +300,17 @@ class Solver(object):
             for i, module in enumerate(leaf_modules):
                 if not hasattr(module, 'weight'):
                     continue
-                modules_count += 1
-                handle = module.register_forward_hook(hook)
-                setattr(module, handle_name, handle)
-                module.hook_in_progress = False
-        print('modules count:', modules_count)
-        return modules_count
+                modules_to_hook.append(module)
+        else:
+            raise ValueError('Unknown level ' + level)
+
+        for module in modules_to_hook:
+            handle = module.register_forward_hook(hook)
+            setattr(module, handle_name, handle)
+            module.hook_in_progress = False
+
+        print('modules count:', len(modules_to_hook))
+        return len(modules_to_hook)
 
     def add_lipschitz_regularization(self):
         self.lipschitz_modules_count = self.add_regularization_forward_hook(self.args.lipschitz_level, 'lipschitz_handle', self.forward_lipschitz_loss_hook_fn)

@@ -99,7 +99,9 @@ class PreResNet(nn.Module):
         for i in range(1, blocks):
             layers.append(block(self.inplanes, planes, cfg[3*i: 3*(i+1)]))
 
-        return nn.Sequential(*layers)
+        seq = nn.Sequential(*layers)
+        seq.custom_name = 'SuperBlock'
+        return seq
 
     def forward(self, x):
         x = self.conv1(x)
