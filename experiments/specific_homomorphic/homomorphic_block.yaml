@@ -1,4 +1,5 @@
 homomorphic_save_dir: "Homomorphic-Block"
+homomorphic_level: "block"
 
 homomorphic_regularization: True
 

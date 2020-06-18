@@ -1,4 +1,0 @@
-level: "model"
-distance_function: "mse"
-
-# TODO: These should also be per homomorphic / lipschitz, not common

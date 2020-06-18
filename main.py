@@ -100,7 +100,8 @@ class Solver(object):
 
         self.lipschitz_loss = None
         self.homomorphic_loss = None
-        self.modules_count = None
+        self.lipschitz_modules_count = None
+        self.homomorphic_modules_count = None
         self.COSINE_EMBEDDING_LOSS_TARGET = None
 
     def load_data(self):
@@ -268,27 +269,25 @@ class Solver(object):
         # module.train()
         module.hook_in_progress = False
 
-    def add_regularization_forward_hook(self, handle_name, hook):
-        # TODO: This is the same variable that gets computed twice for homo and lips...
-        #       We can't allow layer-wise lipschitz and block-wise homomorphic currently.
-        self.modules_count = 0
+    def add_regularization_forward_hook(self, level, handle_name, hook):
+        modules_count = 0
 
-        if self.args.level == "model":
-            self.modules_count = 1
+        if level == "model":
+            modules_count = 1
             handle = self.model.register_forward_hook(hook)
             setattr(self.model, handle_name, handle)
             self.model.hook_in_progress = False
 
-        elif self.args.level == "block":
+        elif level == "block":
             if "PreResNet" in self.args.model_name:
                 for name, module in self.model.named_modules():
                     if re.match(r"^layer[0-9]\.[0-9]+$", name):
-                        self.modules_count += 1
+                        modules_count += 1
                         handle = module.register_forward_hook(hook)
                         setattr(module, handle_name, handle)
                         module.hook_in_progress = False
 
-        elif self.args.level == "layer":
+        elif level == "layer":
             def get_leaf_modules(network):
                 leafs = []
                 for layer in network.children():
@@ -305,16 +304,18 @@ class Solver(object):
             for i, module in enumerate(leaf_modules):
                 if not hasattr(module, 'weight'):
                     continue
-                self.modules_count += 1
+                modules_count += 1
                 handle = module.register_forward_hook(hook)
                 setattr(module, handle_name, handle)
                 module.hook_in_progress = False
+        print('modules count:', modules_count)
+        return modules_count
 
     def add_lipschitz_regularization(self):
-        self.add_regularization_forward_hook('lipschitz_handle', self.forward_lipschitz_loss_hook_fn)
+        self.lipschitz_modules_count = self.add_regularization_forward_hook(self.args.lipschitz_level, 'lipschitz_handle', self.forward_lipschitz_loss_hook_fn)
 
     def add_homomorphic_regularization(self):
-        self.add_regularization_forward_hook('homomorphic_handle', self.forward_homomorphic_loss_hook_fn)
+        self.homomorphic_modules_count = self.add_regularization_forward_hook(self.args.homomorphic_level, 'homomorphic_handle', self.forward_homomorphic_loss_hook_fn)
 
     def get_k_weights(self):
         if self.args.homomorphic_const_sum_groups:
@@ -335,8 +336,6 @@ class Solver(object):
     
     def train(self):
         print("train:")
-        if self.args.lipschitz_regularization or self.args.homomorphic_regularization:
-            assert self.modules_count > 0
 
         self.model.train()
         total_loss = 0
@@ -356,12 +355,12 @@ class Solver(object):
             loss = self.criterion(output, target)
 
             if self.args.lipschitz_regularization:
-                self.lipschitz_loss = (self.lipschitz_loss * self.args.lipschitz_regularization_loss_factor) / self.modules_count
+                self.lipschitz_loss = (self.lipschitz_loss * self.args.lipschitz_regularization_loss_factor) / self.lipschitz_modules_count
                 loss += self.lipschitz_loss
                 self.writer.add_scalar("Train/Lipschitz_Batch_Loss", self.lipschitz_loss.item(), batch_plot_idx) # TODO the loss values suck, they are either ~1.0 or ~0.0
 
             if self.args.homomorphic_regularization and self.sum_groups > 1:
-                self.homomorphic_loss = (self.homomorphic_loss * self.args.homomorphic_regularization_factor) / self.modules_count
+                self.homomorphic_loss = (self.homomorphic_loss * self.args.homomorphic_regularization_factor) / self.homomorphic_modules_count
                 loss += self.homomorphic_loss
                 self.writer.add_scalar("Train/Homomorphic_Batch_Loss", self.homomorphic_loss.item(), batch_plot_idx)
 

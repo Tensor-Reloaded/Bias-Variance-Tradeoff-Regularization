@@ -1,4 +1,0 @@
-lipschitz_regularization: False
-homomorphic_regularization: False
-aux_save_dir: "Baseline"
-distance_function: None

@@ -1,5 +1,5 @@
-homomorphic_save_dir: "Homomorphic-Block-Const"
-homomorphic_level: "block"
+homomorphic_save_dir: "Homomorphic-Model-Const"
+homomorphic_level: "model"
 
 homomorphic_regularization: True
 

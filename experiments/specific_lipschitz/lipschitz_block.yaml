@@ -1,4 +1,5 @@
 lipschitz_save_dir: "Lipschitz-Block"
+lipschitz_level: "block"
 
 lipschitz_regularization: True
 
