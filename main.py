@@ -218,8 +218,9 @@ class Solver(object):
         elif self.args.distance_function == "nll":
             return nll_loss(got, want)
         elif self.args.distance_function == "bce_with_logits":
-            assert self.args.level == "model"
             return F.binary_cross_entropy_with_logits(got, want)
+        elif self.args.distance_function == "cross_entropy":
+            return F.cross_entropy(got, want)
 
         raise ValueError("lipschitz/homomorphic distance function not implemented")
 
