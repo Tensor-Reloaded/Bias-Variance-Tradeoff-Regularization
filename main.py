@@ -220,7 +220,7 @@ class Solver(object):
         elif self.args.distance_function == "bce_with_logits":
             return F.binary_cross_entropy_with_logits(got, want)
         elif self.args.distance_function == "cross_entropy":
-            return F.cross_entropy(got, want)
+            return -torch.sum(F.softmax(want) * F.log_softmax(got))
 
         raise ValueError("lipschitz/homomorphic distance function not implemented")
 
