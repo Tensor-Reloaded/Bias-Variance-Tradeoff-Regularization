@@ -1,0 +1,4 @@
+- specific_lipschitz=baseline
+- specific_homomorphic=homomorphic_block_const_sum_groups
+- train_subset=1000
+- homomorphic_regularization_factor=20
