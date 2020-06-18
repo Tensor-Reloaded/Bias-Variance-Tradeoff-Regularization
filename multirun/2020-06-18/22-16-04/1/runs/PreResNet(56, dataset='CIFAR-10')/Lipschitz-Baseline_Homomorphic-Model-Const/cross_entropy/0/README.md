@@ -4,7 +4,7 @@ cuda: true
 cuda_device: 0
 dataset: ${dataset_name}
 dataset_name: CIFAR-10
-distance_function: bce_with_logits
+distance_function: cross_entropy
 epoch: 200
 es_patience: 100000
 half: false
@@ -12,7 +12,7 @@ homomorphic_const_sum_groups: true
 homomorphic_k_inputs: 2
 homomorphic_level: model
 homomorphic_regularization: true
-homomorphic_regularization_factor: 0.001
+homomorphic_regularization_factor: 0.1
 homomorphic_save_dir: Homomorphic-Model-Const
 initialization: 0
 initialization_batch_norm: false
@@ -49,4 +49,4 @@ type: sgd
 wd: 0.0001
 
 ## Accuracy
- 41.620%
+ 51.170%

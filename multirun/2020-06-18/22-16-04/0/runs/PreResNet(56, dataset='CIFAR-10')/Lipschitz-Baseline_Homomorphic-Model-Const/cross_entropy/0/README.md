@@ -47,3 +47,6 @@ train_batch_size: 128
 train_subset: 1000
 type: sgd
 wd: 0.0001
+
+## Accuracy
+ 47.120%
