@@ -1,4 +1,0 @@
-- specific_lipschitz=baseline
-- specific_homomorphic=homomorphic_block_const_sum_groups
-- specific_common=baseline
-- train_subset=1000

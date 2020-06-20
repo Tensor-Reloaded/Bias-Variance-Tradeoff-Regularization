@@ -1,3 +1,0 @@
-- specific_lipschitz=baseline
-- specific_homomorphic=homomorphic_superblock_const_sum_groups
-- train_subset=1000
