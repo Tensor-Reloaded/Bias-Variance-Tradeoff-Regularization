@@ -1,0 +1,4 @@
+- specific_lipschitz=baseline
+- specific_homomorphic=homomorphic_model_const_sum_groups
+- specific_common=cross_entropy
+- homomorphic_regularization_factor=0.01

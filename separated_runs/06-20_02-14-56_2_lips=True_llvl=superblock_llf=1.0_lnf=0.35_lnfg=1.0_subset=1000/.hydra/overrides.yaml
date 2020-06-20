@@ -1,0 +1,6 @@
+- specific_lipschitz=lipschitz_superblock
+- specific_homomorphic=baseline
+- train_subset=1000
+- lipschitz_regularization_loss_factor=1.0
+- lipschitz_noise_factor=0.35
+- lipschitz_noise_factor_gamma=1.0
