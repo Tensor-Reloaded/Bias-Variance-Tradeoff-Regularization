@@ -1,6 +1,0 @@
-- specific_lipschitz=lipschitz_model
-- specific_homomorphic=baseline
-- specific_common=cross_entropy
-- lipschitz_regularization_loss_factor=0.01
-- lipschitz_noise_factor=0.2
-- lipschitz_noise_factor_gamma=1.0
